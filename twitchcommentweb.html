@@ -189,9 +189,13 @@
             };
 
             ws.onmessage = (event) => {
-                const messages = event.data.trim().split('\n');
+                const raw = event.data.trim();
+                // ★ 追加：PINGに即PONGで応答
+                if (raw.startsWith('PING')) { ws.send('PONG :tmi.twitch.tv'); return; }
+
+                const messages = raw.split('\n');
                 messages.forEach(message => {
-                    console.log('Raw message:', message); // 受信した生データを出力
+                    console.log('Raw message:', message);
                     handleMessage(message);
                 });
             };
