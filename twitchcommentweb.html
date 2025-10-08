@@ -1,380 +1,961 @@
 <!DOCTYPE html>
 <html lang="ja">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>真ナダルーレット改ver.2</title>
-    <style>
-        body {
-            font-family: Arial, sans-serif;
-            margin: 20px;
-        }
-        .top-bar {
-            display: flex;
-            align-items: center;
-            margin-bottom: 20px;
-        }
-        #channelUrl {
-            width: 500px;
-            padding: 5px;
-            font-size: 14px;
-            height: 32px;
-            box-sizing: border-box;
-        }
-        #connectButton {
-            margin-left: 10px;
-            height: 32px;
-        }
-        .content {
-            display: none; /* 初期状態で非表示 */
-        }
-        #chat {
-            width: 500px;
-            height: 400px;
-            border: 1px solid #ccc;
-            overflow-y: scroll;
-            padding: 10px;
-            background-color: #f9f9f9;
-            margin-right: 20px;
-        }
-        .message {
-            margin: 5px 0;
-        }
-        .username {
-            font-weight: bold;
-        }
-        #ranking, #participantList {
-            width: 300px;
-            height: 400px;
-            border: 1px solid #ccc;
-            padding: 10px;
-            background-color: #f1f1f1;
-            overflow-y: auto;
-            margin-right: 20px;
-        }
-        .ranking-item, .participant-item {
-            display: flex;
-            align-items: center;
-            padding: 5px;
-            border: 1px solid #ccc;
-            background-color: #fff;
-            font-size: 14px;
-            height: 28px;
-        }
-        .ranking-item:first-child, .participant-item:first-child {
-            background-color: #fff9cc; /* 薄い黄色 */
-        }
-        .ranking-item:nth-child(-n+3), .participant-item:nth-child(-n+3) {
-            font-size: 16px; /* 1位～3位は少し大きく */
-            height: 28px; /* 高さはそのまま */
-        }
-        .ranking-item:nth-child(n+4), .participant-item:nth-child(n+4) {
-            height: 24px; /* それ以下の順位は4px小さく */
-        }
-        .ranking-item span.name, .participant-item span.name {
-            flex-grow: 1;
-            text-align: left;
-            margin-left: 10px;
-        }
-        .ranking-item span.points, .participant-item span.points {
-            width: 60px;
-            text-align: right;
-        }
-        .participant-item button {
-            margin-left: 5px;
-            font-size: 12px;
-            padding: 2px 5px;
-            cursor: pointer;
-        }
-        .image-display {
-            display: none; /* 初期状態で非表示 */
-            position: fixed;
-            top: 50%;
-            left: 50%;
-            transform: translate(-50%, -50%);
-            width: auto;
-            height: auto;
-            max-width: 80%;
-            max-height: 80%;
-            z-index: 1000;
-            border: 5px solid #fff;
-            box-shadow: 0 0 15px rgba(0, 0, 0, 0.5);
-        }
-        #yuriyanImage {
-            height: 420px; /* 高さを420pxに設定 */
-            width: auto; /* 縦横比を維持 */
-        }
-        #targetName {
-            display: none;
-            position: fixed;
-            top: calc(50% - 270px); /* 中央から270px上 */
-            left: 50%;
-            transform: translate(-50%, 0);
-            padding: 10px;
-            background-color: #fff;
-            border: 2px solid #ccc;
-            font-size: 24px;
-            font-weight: bold;
-            z-index: 1001;
-        }
-        #resultText {
-            display: none;
-            position: fixed;
-            top: calc(50% + 230px); /* 中央から230px下 */
-            left: 50%;
-            transform: translate(-50%, 0);
-            padding: 10px;
-            background-color: #fff;
-            border: 2px solid #ccc;
-            font-size: 24px;
-            font-weight: bold;
-            z-index: 1001;
-        }
-    </style>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Twitch投票ゲージ（Firebase連動）</title>
+  <style>
+    :where([hidden]) { display: none !important; }
+    :root{
+      --fg:#ffffff;
+      --red:#e63946; --red-bright:#ff7373; --red-deep:#8a1c26;
+      --blue:#1e88e5; --blue-bright:#64b5f6; --blue-deep:#0c3c78;
+
+      /* UI背景の不透明度（85%） */
+      --panel-alpha: 0.85;
+
+      /* フォント（前回要望反映済み） */
+      --fs-title: clamp(22px, 2.8vw, 44px);
+      --fs-rules: clamp(22px, 3.2vw, 56px);
+      --fs-rules-sub: clamp(18px, 2.7vw, 36px);
+      --fs-label: clamp(24px, 3vw, 48px);  /* 〇赤/〇青（控えめ） */
+      --fs-pct:   clamp(30px, 4.5vw, 60px);/* %（強調） */
+      --fs-count: clamp(27px, 3.9vw, 36px);/* (票)（強調） */
+      --fs-timer: clamp(28px, 3.8vw, 60px);/* 残り時間（やや大きく） */
+    }
+    *{ box-sizing:border-box; }
+    body{
+      margin:0; background:transparent; color:var(--fg);
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Hiragino Kaku Gothic ProN", "Noto Sans JP", sans-serif;
+      display:flex; align-items:center; justify-content:center; min-height:100vh;
+      padding: 2.5vmin;
+    }
+
+    /* 既定は何も見せない */
+    #rootHiddenGuard{ position:fixed; inset:0; display:block; background:transparent; }
+
+    /* UI本体（最初は hidden） */
+    #frame{
+      width:min(1200px, 96vw); /* ← 横最大1200pxに変更 */
+      background: rgba(0,0,0,var(--panel-alpha));
+      border-radius: 24px;
+      padding: clamp(12px, 2vmin, 20px); /* 少し圧縮 */
+      border: 2px solid rgba(255,255,255,0.9);
+      backdrop-filter: blur(1px);
+      display: grid;
+      gap: clamp(10px, 1.6vmin, 20px); /* 間隔を少し詰める */
+      grid-template-rows: auto auto 1fr auto;
+    }
+
+    /* タイトル（赤/青に色付け、ボールド） */
+    #title{ 
+      font-size: clamp(18px, 2vw, 32px); /* 小さめに調整 */
+      margin: 0; 
+      font-weight:900; 
+      letter-spacing:.02em; 
+    }
+    .t-red { color: var(--red);  font-weight:1000; }
+    .t-blue{ color: var(--blue); font-weight:1000; }
+
+    /* 参加方法＋タイマー */
+    #meta{ 
+      display:grid; 
+      grid-template-columns: 1fr auto; 
+      align-items:center; 
+      gap: clamp(10px, 1.8vmin, 20px); /* 全体に少し詰める */
+    }
+    #rules{ line-height:1.25; }
+    .rule-head{
+      display:inline-flex; align-items:center; gap:.5em; font-weight:900;
+      border:2px solid rgba(255,255,255,0.95); border-radius:10px; /* 丸み小さく */
+      padding:.15em .6em;
+      margin-right:.5em; 
+      font-size:clamp(16px, 1.8vw, 28px); /* ↓調整 */
+      background: rgba(0,0,0,var(--panel-alpha));
+    }
+    .rule-body{ 
+      font-size:clamp(16px, 1.8vw, 28px); 
+      font-weight:900; 
+    }
+    .rule-sub{ 
+      display:block; 
+      margin-top:.25em; 
+      font-size:clamp(14px, 1.6vw, 22px); 
+      font-weight:800; 
+    }
+    #timer{
+      font-size: clamp(18px, 2vw, 30px); /* 調整 */
+      font-weight:1000; letter-spacing:.02em;
+      padding:.2em .6em; 
+      border:2px solid rgba(255,255,255,0.95); 
+      border-radius:10px; 
+      background: rgba(0,0,0,var(--panel-alpha));
+    }
+
+    /* 〇赤／〇青（同並び、控えめサイズ） */
+    #cards{ 
+      display:grid; 
+      grid-template-columns:1fr 1fr; 
+      gap: clamp(10px, 2vmin, 20px); 
+    }
+    .card{
+      background: rgba(0,0,0,var(--panel-alpha));
+      border:2px solid rgba(255,255,255,0.9); 
+      border-radius:12px; /* 少し小さく */
+      padding: clamp(8px, 1.5vmin, 16px); /* コンパクト */
+      display:grid; gap:.25em; 
+      justify-items:center; align-items:center;
+    }
+    .label{ 
+      display:flex; align-items:center; gap:.4em; 
+      font-size:clamp(18px, 2vw, 28px); 
+      font-weight:1000; 
+    }
+    .dot{ width:1em; height:1em; border-radius:999px; display:inline-block; }
+    .dot.red{ background:var(--red); } .dot.blue{ background:var(--blue); }
+    .pct{ 
+      font-size:clamp(28px, 4vw, 50px); 
+      font-weight:900; 
+    }
+    .count{ 
+      font-size:clamp(18px, 2vw, 26px); 
+      font-weight:800; 
+      font-variant-numeric:tabular-nums; 
+    }
+
+    /* ゲージ：ほんのり斜めグラデで暗くなる（かっこよく） */
+    #bars{
+      width:100%; 
+      height: clamp(40px, 8vmin, 90px); /* 高さを調整 */
+      border:2px solid rgba(255,255,255,0.95); 
+      border-radius:14px; /* 少し丸み減 */
+      overflow:hidden;
+      background: rgba(0,0,0,var(--panel-alpha)); 
+      position:relative; 
+      display:flex;
+    }
+    #bars::before{
+      content:""; 
+      position:absolute; inset:0;
+      background: linear-gradient(180deg, rgba(255,255,255,0.12), rgba(255,255,255,0.03));
+      pointer-events:none; 
+      mix-blend-mode: screen;
+    }
+    .bar{ height:100%; transition:width .35s ease; position:relative; }
+    #redBar{ 
+      width:50%; 
+      background: linear-gradient(135deg, var(--red-bright) 0%, var(--red) 55%, var(--red-deep) 100%); 
+    }
+    #blueBar{ 
+      width:50%; 
+      background: linear-gradient(135deg, var(--blue-bright) 0%, var(--blue) 55%, var(--blue-deep) 100%); 
+    }
+
+    /* 結果オーバーレイ */
+    #result{ 
+      position:fixed; inset:0; align-items:center; justify-content:center;
+      background: rgba(0,0,0,.65); z-index: 10; padding: 3vmin; 
+    }
+    #resultCard {
+      position: absolute;
+      top: 50%; left: 50%;
+      transform: translate(-50%, -50%); /* 中央配置 */
+      width: 60%;   /* 横幅縮小 */
+      height: 60%;  /* 高さ縮小 */
+      background: rgba(0,0,0,0.9);
+      border: 2px solid rgba(255,255,255,0.95);
+      border-radius: 16px; /* 丸み減 */
+      padding: 2vmin;
+      text-align: center;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      color: #fff;
+    }
+    #resultTitle{ font-size: var(--fs-rules-sub); margin:0; }
+    #winner{ font-size: clamp(40px, 6vw, 100px); font-weight: 1000; margin: .1em 0; }
+    #breakdown{ font-size: clamp(18px, 2.5vw, 32px); }
+
+    /* 管理者用ボタン */
+    #adminPanel {
+      position: fixed;
+      top: 8px; left: 50%;
+      transform: translateX(-50%);
+      display: flex;
+      gap: 8px;
+      z-index: 2000;
+    }
+    #adminPanel button {
+      padding: 6px 12px;
+      font-size: 16px;
+      font-weight: bold;
+    }
+
+    #winnerText {
+      font-size: 4rem;   /* 半分くらいの大きさ */
+      text-align: center;
+      line-height: 1.6;
+    }
+    .highlight-red {
+      color: red;
+      font-weight: bold;
+    }
+    .highlight-blue {
+      color: blue;
+      font-weight: bold;
+    }
+
+    /* フェードアニメーション */
+    .fade1s {
+      opacity: 0;
+      pointer-events: none;   /* 非表示時は操作不可 */
+      transition: opacity 0.7s ease;
+    }
+    .fade1s.show {
+      opacity: 1;
+      pointer-events: auto;   /* 表示中だけ操作可能 */
+    }
+
+    /* ===============================
+      🎮 チームメンバー表示エリア（中央配置）
+    ==================================*/
+    #teamsContainer {
+      position: fixed;
+      top: 20px;              /* 上端から20px */
+      left: 50%;
+      transform: translateX(-50%); /* X軸だけ中央に */
+      display: flex;
+      justify-content: center; /* 中央寄せ */
+      align-items: flex-start;  /* 上端揃え */
+      width: 100%;
+      height: auto;
+      pointer-events: none;
+      z-index: 10;
+    }
+
+    /* チームボックス：赤・青を左右に配置 */
+    .team-box {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      margin: 0 100px; /* 赤青の間隔 */
+    }
+
+    /* メンバー表示（縦1列・中央揃え） */
+    .members {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+    }
+
+    /* 各メンバー */
+    .member {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      text-align: center;
+      color: white;
+    }
+
+    /* アイコン */
+    .member .icon {
+      width: 100px;
+      height: 100px;
+      border-radius: 50%;
+      object-fit: cover;
+      border: 2px solid rgba(255,255,255,0.9);
+      box-shadow: 0 0 10px rgba(0,0,0,0.4);
+    }
+
+    /* 名前とランク */
+    .member .name {
+      font-size: 15px;
+      font-weight: 800;
+      margin-top: 6px;
+    }
+
+    .member .rank {
+      margin-top: 3px;
+      width: 50px;
+      opacity: 0.9;
+    }
+
+
+
+  </style>
 </head>
 <body>
-    <h1>真ナダルーレット改ver.2</h1>
-    <div class="top-bar">
-        <input type="text" id="channelUrl" placeholder="Twitch配信URLを入力">
-        <button id="connectButton" onclick="connectChat()">接続</button>
+  <!-- デフォルトは何も表示しない -->
+  <div id="rootHiddenGuard"></div>
+
+  <!-- 管理者用ボタン -->
+  <div id="adminPanel" hidden>
+    <button id="btnStart">投票開始</button>
+    <button id="btnRestart">タイマーリセット</button>
+    <button id="btnReset">全リセット</button>
+    <button id="btnRed">赤に＋1</button>
+    <button id="btnBlue">青に＋1</button>
+    <button id="btnShow">UI表示</button>
+    <button id="btnHide">UI非表示</button>
+    <button id="btnEnd">終了</button>
+    <button id="btnRedWin">赤勝ち</button>
+    <button id="btnBlueWin">青勝ち</button>
+  </div>
+
+  <!-- 🧩 チーム表示エリア -->
+  <div id="teamsContainer" class="fade1s show">
+    <div id="teamRed" class="team-box">
+      <div class="members" id="membersRed"></div>
     </div>
-    <div class="content" id="content">
-        <div>
-            <h2>チャットログ</h2>
-            <div id="chat"></div>
-        </div>
-        <div>
-            <h2>ランキング</h2>
-            <div id="ranking"></div>
-        </div>
-        <div>
-            <h2>参加者リスト</h2>
-            <div id="participantList"></div>
-        </div>
+
+    <div id="teamBlue" class="team-box">
+      <div class="members" id="membersBlue"></div>
     </div>
-    <img id="nadalImage" src="nadal.jpg" alt="ナダル" class="image-display">
-    <img id="yuriyanImage" src="yuriyan.png" alt="ゆりやん" class="image-display">
-    <div id="targetName"></div>
-    <div id="resultText"></div>
+  </div>
 
-    <script>
-        let ws;
-        const ranking = {};
-        let isRouletteRunning = false;
 
-        function connectChat() {
-            const channelUrl = document.getElementById('channelUrl').value;
-            const channelName = extractChannelName(channelUrl);
 
-            if (!channelName) {
-                alert("有効なTwitch配信URLを入力してください。");
-                return;
-            }
+  <!-- UI本体（Firestore visible=true で表示） -->
+  <div id="frame" class="fade1s">
+    <p id="title"><span class="t-red">赤チーム</span> VS <span class="t-blue">青チーム</span>　どちらが勝つか予想しよう！— コメントで参加</p>
 
-            if (ws) {
-                ws.close();
-            }
+    <div id="meta">
+      <div id="rules">
+        <span class="rule-head">参加方法</span>
+        <span class="rule-body">チャットで <b>!赤</b> または <b>!青</b> と入力！</span>
+        <span class="rule-sub">（投票の取り消し／変更OK・常に最新票が有効）</span>
+      </div>
+      <div id="timer">残り: 3:00</div>
+    </div>
 
-            ws = new WebSocket('wss://irc-ws.chat.twitch.tv:443');
+    <div id="cards">
+      <div class="card">
+        <div class="label"><span class="dot red"></span><span>赤</span></div>
+        <div class="pct" id="redPct">50%</div>
+        <div class="count" id="redCount">(0票)</div>
+      </div>
+      <div class="card">
+        <div class="label"><span class="dot blue"></span><span>青</span></div>
+        <div class="pct" id="bluePct">50%</div>
+        <div class="count" id="blueCount">(0票)</div>
+      </div>
+    </div>
 
-            ws.onopen = () => {
-                ws.send('CAP REQ :twitch.tv/tags twitch.tv/commands twitch.tv/membership');
-                ws.send('PASS SCHMOOPIIE'); // Anonymous connection
-                ws.send('NICK justinfan' + Math.floor(Math.random() * 100000));
-                ws.send('JOIN #' + channelName);
-                console.log('Connected to channel:', channelName);
-                
-                // Show content after successful connection
-                document.getElementById('content').style.display = 'flex';
-            };
+    <div id="bars">
+      <div id="redBar" class="bar"></div>
+      <div id="blueBar" class="bar"></div>
+    </div>
+  </div>
 
-            ws.onmessage = (event) => {
-                const raw = event.data.trim();
-                // ★ 追加：PINGに即PONGで応答
-                if (raw.startsWith('PING')) { ws.send('PONG :tmi.twitch.tv'); return; }
+  <!-- 結果オーバーレイ -->
+  <div id="result" class="fade1s">
+    <div id="resultCard">
+      <p id="resultTitle" style="margin-top: 3em;">投票終了！勝者は——</p>
+      <p id="winner"></p>
+      <p id="breakdown"></p>
+    </div>
+  </div>
 
-                const messages = raw.split('\n');
-                messages.forEach(message => {
-                    console.log('Raw message:', message);
-                    handleMessage(message);
-                });
-            };
+  <!-- Firebase + Firestore + アプリ本体 -->
+  <script type="module">
+    import {
+      getFirestore,
+      doc,
+      onSnapshot,
+      setDoc,
+      updateDoc,
+      getDoc,
+      getDocs,
+      serverTimestamp,
+      increment,
+      collection,
+      addDoc,
+      query,
+      orderBy,
+      limit
+    } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 
-            ws.onerror = (error) => {
-                console.error('WebSocket error:', error);
-            };
+    // ==== Firebase Config ====
+    const firebaseConfig = {
+      apiKey: "AIzaSyCVTEvN3EqebNOLlFdGfGA5612VkcRRbsQ",
+      authDomain: "twitchchatdatabase.firebaseapp.com",
+      projectId: "twitchchatdatabase",
+      storageBucket: "twitchchatdatabase.firebasestorage.app",
+      messagingSenderId: "861792479829",
+      appId: "1:861792479829:web:9afe238a03f6527a55c2dc",
+      measurementId: "G-3N10HW4NEY"
+    };
+    const app = initializeApp(firebaseConfig);
+    const db  = getFirestore(app);
+    const pollsCol = collection(db, "polls");
 
-            ws.onclose = () => {
-                console.log('Disconnected');
-            };
+    // ==== URLパラメータ ====
+    function parseLaunchParams() {
+      const search = window.location.search.toLowerCase();
+      const params = new URLSearchParams(window.location.search);
+
+      // モード判定（両方含んでOK）
+      const mode = {
+        viewer: search.includes("viewer"),
+        log: search.includes("log"),
+      };
+
+      // チャンネル取得（複数対応）
+      const urlParam = params.get("url");
+      const channelList = [];
+      if (urlParam) {
+        for (const u of urlParam.split(",")) {
+          const ch = extractChannelName(u.trim());
+          if (ch) channelList.push(ch);
+        }
+      }
+
+      return { mode, channelList };
+    }
+    function extractChannelName(url) {
+      if (!url) return null;
+      const m = String(url).match(/twitch\.tv\/([^\/?#&]+)/i);
+      return m ? m[1] : null;
+    }
+
+    let currentPollRef = null;   // 最新PollのDocRef
+    let currentPollId  = null;   // 最新PollのID
+
+    // === 最新pollを監視する ===
+    function watchLatestPoll(viewerMode){
+      const q = query(collection(db,"polls"), orderBy("createdAt","desc"), limit(1));
+      onSnapshot(q, (snap)=>{
+        if (snap.empty) return;
+        const docSnap = snap.docs[0];
+        currentPollRef = docSnap.ref;
+        currentPollId  = docSnap.id;
+
+        const data = docSnap.data() || {};
+
+        // 票更新
+        const v = data.votes || {red:0, blue:0};
+        updateBars(v.red, v.blue);
+
+        // タイマー更新
+        if (data.endTime) {
+          endTime = data.endTime;
         }
 
-        function extractChannelName(url) {
-            const match = url.match(/twitch\.tv\/([^\/?]+)/);
-            return match ? match[1] : null;
+        // viewerモードのときだけ visible 制御
+        if (viewerMode) {
+          const teamContainer = document.getElementById("teamsContainer");
+          
+          // ✅ UI表示制御
+          if (data.visible) {
+            frameEl.classList.add("show");
+            teamContainer.classList.add("show");
+            guardEl.style.display = "none";
+
+          } else {
+            frameEl.classList.remove("show");
+            teamContainer.classList.remove("show");
+            guardEl.style.display = "block";
+          }
         }
+      });
+    }
 
-        function handleMessage(data) {
-            if (data.includes('PRIVMSG')) {
-                const tags = parseTags(data);
-                const displayName = tags['display-name'] || 'Unknown';
-                const message = data.split('PRIVMSG')[1].split(':')[1];
-                const color = tags['color'] || '#000000'; // デフォルトは黒色
+    // ==== 投票ロジック ====
+    let ws = null, finished = false;
+    const userVotes = Object.create(null);
+    let endTime = null;
 
-                displayMessage(displayName, message, color);
+    const frameEl = document.getElementById("frame");
+    const guardEl = document.getElementById("rootHiddenGuard");
+    const resultEl = document.getElementById("result");
+    const winnerEl = document.getElementById("winner");
+    const breakdownEl = document.getElementById("breakdown");
+    const redBar = document.getElementById("redBar");
+    const blueBar = document.getElementById("blueBar");
+    const redPctEl = document.getElementById("redPct");
+    const bluePctEl= document.getElementById("bluePct");
+    const redCntEl = document.getElementById("redCount");
+    const blueCntEl= document.getElementById("blueCount");
+    const timerEl  = document.getElementById("timer");
 
-                if ((message.includes('ナダル') || message.includes('なだる')) && !isRouletteRunning) {
-                    addToRanking(displayName);
-                    startImageSequence(displayName);
-                }
+    // ==== WebSocket接続（複数JOIN + log対応） ====
+    function connectMultipleChannels(channels, mode) {
+      if (!channels.length) return;
 
-                checkForSpecialCase(displayName, message);
-            }
+      ws = new WebSocket("wss://irc-ws.chat.twitch.tv:443");
+
+      ws.onopen = () => {
+        ws.send("CAP REQ :twitch.tv/tags twitch.tv/commands twitch.tv/membership");
+        ws.send("PASS SCHMOOPIIE");
+        ws.send("NICK justinfan" + Math.floor(Math.random() * 100000));
+
+        for (const ch of channels) {
+          ws.send("JOIN #" + ch);
+          console.log(`✅ JOINED: #${ch}`);
         }
+      };
 
-        function parseTags(data) {
-            const tagsPart = data.split(' ')[0];
-            const tagPairs = tagsPart.split(';');
-            const tags = {};
-            tagPairs.forEach(tagPair => {
-                const [key, value] = tagPair.split('=');
-                tags[key] = value || '';
-            });
-            return tags;
+      ws.onmessage = (ev) => {
+        const raw = ev.data.trim();
+        if (raw.startsWith("PING")) { ws.send("PONG :tmi.twitch.tv"); return; }
+
+        for (const line of raw.split("\n")) {
+          if (!line.includes("PRIVMSG")) continue;
+
+          const msg  = getMessageText(line);
+          const tags = parseTags(line);
+          const uid  = getStableUserId(tags, line);
+          if (!uid) continue;
+          const displayName = tags["display-name"] || uid;
+          const channel = (line.match(/#([a-zA-Z0-9_]+)/) || [])[1] || "unknown";
+
+          // 💬 Logモード有効なら全メッセージを出力
+          if (mode.log) console.log(`[${channel}] ${displayName}: ${msg}`);
+
+          // viewerまたはlogモードのどちらかが有効なら投票可能
+          if (!mode.viewer && !mode.log) return;
+          if (finished || !currentPollId) return;
+
+          let vote = null;
+          // 投票キーワード判定（半角/全角、別表記対応）
+          const normalizedMsg = msg.toLowerCase().replace(/[！!]/g, "!");
+
+          // !赤 / !あか / !aka / !red をすべて認識
+          if (/! *(赤|あか|aka|red)/i.test(normalizedMsg)) {
+            vote = "red";
+          }
+          // !青 / !あお / !ao / !blue をすべて認識
+          else if (/! *(青|あお|ao|blue)/i.test(normalizedMsg)) {
+            vote = "blue";
+          }
+          if (!vote) continue;
+
+          // ✅ 投票データ登録
+          registerOrChangeVote(currentPollId, uid, displayName, vote);
         }
+      };
+    }
 
-        function displayMessage(username, message, color) {
-            const chat = document.getElementById('chat');
-            const div = document.createElement('div');
-            div.classList.add('message');
-            div.innerHTML = `<span class="username" style="color: ${color};">${username}:</span> ${message}`;
-            chat.appendChild(div);
-            chat.scrollTop = chat.scrollHeight;
+    function getMessageText(line){
+      const i = line.indexOf(" PRIVMSG ");
+      if (i < 0) return "";
+      const part = line.slice(i);
+      const c = part.indexOf(" :");
+      return c >= 0 ? part.slice(c+2) : "";
+    }
+    function parseTags(line){
+      const firstSpace = line.indexOf(" ");
+      const tagsPart = firstSpace > 0 ? line.slice(0, firstSpace) : "";
+      const obj = {};
+      for (const kv of tagsPart.split(";")) {
+        const [k, v] = kv.split("=");
+        if (k) obj[k] = v || "";
+      }
+      return obj;
+    }
+    function getStableUserId(tags, line){
+      if (tags["user-id"]) return tags["user-id"];
+      if (tags["login"]) return tags["login"];
+      const m = line.match(/^[^ ]+\s:([^!]+)!/);
+      if (m) return m[1].toLowerCase();
+      return null;
+    }
+
+
+  // ユーザー投票処理
+  async function registerOrChangeVote(pollId, uid, color, displayName) {
+    const pollRef = doc(db, "polls", pollId);
+    const pollSnap = await getDoc(pollRef);
+
+    if (!pollSnap.exists()) return;
+    const pollData = pollSnap.data();
+
+    if (pollData.finished || Date.now() > pollData.endTime) {
+      console.log("投票受付終了済みです");
+      return;
+    }
+
+    const voterRef = doc(db, "polls", pollId, "voters", displayName);
+    const voterSnap = await getDoc(voterRef);
+
+    if (!voterSnap.exists()) {
+      await setDoc(voterRef, { uid: uid, choice: color });
+      await updateDoc(pollRef, { [`votes.${color}`]: increment(1) });
+    } else {
+      const prevColor = voterSnap.data().choice;
+      if (prevColor !== color) {
+        await updateDoc(pollRef, {
+          [`votes.${prevColor}`]: increment(-1),
+          [`votes.${color}`]: increment(1)
+        });
+        await setDoc(voterRef, { uid: uid, choice: color });
+      }
+    }
+  }
+
+
+
+    function updateBars(red, blue){
+      const total = red + blue;
+      let redPct = total > 0 ? Math.round((red/total)*1000)/10 : 50;
+      redBar.style.width  = redPct + "%";
+      blueBar.style.width = (100 - redPct) + "%";
+      redPctEl.textContent  = redPct.toFixed(1).replace(/\.0$/,"") + "%";
+      bluePctEl.textContent = (100-redPct).toFixed(1).replace(/\.0$/,"") + "%";
+      redCntEl.textContent  = `(${red}票)`;
+      blueCntEl.textContent = `(${blue}票)`;
+    }
+
+    // 1秒ごとに残り時間を表示
+    setInterval(()=>{
+      if (endTime) {
+        const remainingMs = endTime - Date.now();
+        const remainingSec = Math.max(0, Math.floor(remainingMs/1000));
+        renderTime(remainingSec);
+      }
+    }, 1000);
+
+    function renderTime(sec){
+      const m = String(Math.floor(sec/60));
+      const s = String(sec%60).padStart(2,"0");
+      timerEl.textContent = sec > 0 ? `残り: ${m}:${s}` : "終了！";
+    }
+
+    // ==== 管理者ボタン ====
+    const { mode } = parseLaunchParams();
+    const isAdmin = !mode.viewer && !mode.log;
+    document.getElementById("adminPanel").hidden = !isAdmin;
+
+    // ==== 投票開始（新しいpollを作る）====
+    document.getElementById("btnStart").addEventListener("click", async ()=>{
+      // 日時からID生成
+      const now = new Date();
+      const id = now.toISOString().replace(/[:.]/g,"-"); // 2025-10-02T14-33-15-123Z → 2025-10-02T14-33-15-123Z
+      const pollRef = doc(collection(db,"polls"), id);
+
+      await setDoc(pollRef, {
+        visible: true,
+        votes: { red: 0, blue: 0 },
+        endTime: Date.now() + 180000,
+        createdAt: serverTimestamp()
+      });
+
+      currentPollRef = pollRef;
+      currentPollId  = id;
+    });
+
+    // ==== タイマーリスタート ====
+    document.getElementById("btnRestart").addEventListener("click", async ()=>{
+      if (!currentPollRef) return;
+      await updateDoc(currentPollRef, { endTime: Date.now() + 180000 });
+    });
+
+    // ==== 全リセット ====
+    document.getElementById("btnReset").addEventListener("click", async ()=>{
+      if (!currentPollRef) return;
+      await updateDoc(currentPollRef, {
+        votes: { red: 0, blue: 0 },
+        endTime: Date.now() + 180000
+      });
+    });
+
+    function setupLongPress(btnId, color) {
+      const btn = document.getElementById(btnId);
+      let intervalId = null, timeoutId = null, isPressed = false;
+      const startPress = async () => {
+        isPressed = true;
+        if (currentPollRef) await updateDoc(currentPollRef, { [`votes.${color}`]: increment(1) });
+        timeoutId = setTimeout(() => {
+          if (isPressed) {
+            intervalId = setInterval(async ()=>{
+              if (!isPressed || !currentPollRef) return;
+              await updateDoc(currentPollRef, { [`votes.${color}`]: increment(1) });
+            },200);
+          }
+        },1000);
+      };
+      const endPress = ()=>{
+        isPressed = false;
+        clearTimeout(timeoutId);
+        clearInterval(intervalId);
+      };
+      btn.addEventListener("mousedown", startPress);
+      btn.addEventListener("mouseup", endPress);
+      btn.addEventListener("mouseleave", endPress);
+    }
+    setupLongPress("btnRed","red");
+    setupLongPress("btnBlue","blue");
+
+    document.getElementById("btnShow").addEventListener("click", async ()=>{
+      if (!currentPollRef) return;
+      await updateDoc(currentPollRef, { visible:true });
+    });
+    document.getElementById("btnHide").addEventListener("click", async ()=>{
+      if (!currentPollRef) return;
+      await updateDoc(currentPollRef, { visible:false });
+    });
+
+    // ==== 起動時処理 ====
+    window.addEventListener("load", () => {
+      const { mode, channelList } = parseLaunchParams();
+
+      if (channelList.length) connectMultipleChannels(channelList, mode);
+
+      // viewer or logどちらかを含んでいればUI起動
+      if (mode.viewer || mode.log) {
+        watchLatestPoll(true);
+      } else {
+        // adminモードの場合
+        watchLatestPoll(false);
+        frameEl.classList.add("show");
+        guardEl.style.display = "none";
+      }
+
+      // ✅ VALORANTチーム変更監視を開始（UI表示と無関係）
+      watchValorantPlayers();
+
+      console.log(`🎮 MODE: viewer=${mode.viewer}, log=${mode.log}`);
+      // ✅ チーム読み込み
+      loadValorantTeams();
+    });
+
+    // ==== 終了ボタン ====
+    document.getElementById("btnEnd").addEventListener("click", async ()=>{
+      if (!currentPollRef) return;
+
+      const now = Date.now();
+
+      // Firestore更新
+      await updateDoc(currentPollRef, {
+        finished: true,
+        endTime: now
+      });
+
+      // ローカル状態も終了扱いに
+      finished = true;
+      endTime = now;
+    });
+
+  // 結果表示関数（フェードインして10秒後にフェードアウト）
+  function showResult(html) {
+    winnerEl.innerHTML = html;
+    // フェードイン
+    resultEl.classList.add("show");
+
+    // 10秒後にフェードアウト
+    setTimeout(() => {
+      resultEl.classList.remove("show");
+    }, 10000);
+  }
+
+  // ==== 赤勝ち ====
+  document.getElementById("btnRedWin").addEventListener("click", async ()=>{
+    if (!currentPollRef) return;
+
+    const votersRef = collection(currentPollRef, "voters");
+    const voterSnaps = await getDocs(votersRef);
+    const redVoters = voterSnaps.docs
+      .map(d => ({ name: d.id, ...d.data() }))
+      .filter(v => v.choice === "red");
+
+    let winnerName = "該当者なし";
+    if (redVoters.length > 0) {
+      const rand = Math.floor(Math.random() * redVoters.length);
+      winnerName = redVoters[rand].name;
+    }
+
+    await updateDoc(currentPollRef, {
+      winner: winnerName,
+      finished: true
+    });
+
+    // 表示（赤文字で強調、無駄な改行なし）
+    showResult(
+      `<div id="winnerText">
+        <span class="highlight-red">赤チームの勝利！</span><br>
+        【 ${winnerName} 】さんが当選しました！🎉<br>
+        おめでとうございます！
+      </div>`
+    );
+  });
+
+  // ==== 青勝ち ====
+  document.getElementById("btnBlueWin").addEventListener("click", async ()=>{
+    if (!currentPollRef) return;
+
+    const votersRef = collection(currentPollRef, "voters");
+    const voterSnaps = await getDocs(votersRef);
+    const blueVoters = voterSnaps.docs
+      .map(d => ({ name: d.id, ...d.data() }))
+      .filter(v => v.choice === "blue");
+
+    let winnerName = "該当者なし";
+    if (blueVoters.length > 0) {
+      const rand = Math.floor(Math.random() * blueVoters.length);
+      winnerName = blueVoters[rand].name;
+    }
+
+    await updateDoc(currentPollRef, {
+      winner: winnerName,
+      finished: true
+    });
+
+    // 表示（青文字で強調、無駄な改行なし）
+    showResult(
+      `<div id="winnerText">
+        <span class="highlight-blue">青チームの勝利！</span><br>
+        【 ${winnerName} 】さんが当選しました！🎉<br>
+        おめでとうございます！
+      </div>`
+    );
+  });
+
+  // =======================================================
+  // 🎯 VALORANT アタッカー＆ディフェンダーの name変更監視
+  // =======================================================
+
+  // 前回のnameを保存するキャッシュ（両チーム共通）
+  let lastPlayerNames = {};
+
+  function watchValorantPlayers() {
+    console.log("👀 Firestore監視開始：アタッカー＆ディフェンダー");
+
+    // 監視対象チーム一覧
+    const teamPaths = [
+      ["アタッカー", "red"],
+      ["ディフェンダー", "blue"]
+    ];
+
+    teamPaths.forEach(([teamName, teamKey]) => {
+      const teamRef = collection(db, "TwitchChatDatabase", "VALORANTteam", teamName);
+
+      // Firestoreのリアルタイム監視を設定
+      onSnapshot(teamRef, (snapshot) => {
+        let nameChanged = false;
+
+        snapshot.forEach((doc) => {
+          const data = doc.data();
+          const docId = `${teamKey}_${doc.id}`; // 例: "red_player1"
+          const newName = data.name || "";
+
+          // player1〜5 のみチェック
+          if (!/^player[1-5]$/.test(doc.id)) return;
+
+          const oldName = lastPlayerNames[docId];
+
+          // 初回キャッシュ登録のみ
+          if (oldName === undefined) {
+            lastPlayerNames[docId] = newName;
+            console.log(`📘 初回キャッシュ: ${docId} = ${newName}`);
+            return;
+          }
+
+          // 名前変更を検知
+          if (oldName !== newName) {
+            console.log(`🔁 ${teamName} の ${doc.id}: name変更検出 → "${oldName}" → "${newName}"`);
+            lastPlayerNames[docId] = newName;
+            nameChanged = true;
+          }
+        });
+
+        // 変更があった場合のみ再読み込み
+        if (nameChanged) {
+          console.log(`✅ ${teamName} 側で変更あり → loadValorantTeams() 実行`);
+          loadValorantTeams();
         }
+      }, (error) => {
+        console.error(`❌ Firestore監視エラー (${teamName}):`, error);
+      });
+    });
+  }
 
-        function startImageSequence(targetName) {
-            isRouletteRunning = true;
-            const nadalImage = document.getElementById('nadalImage');
-            const yuriyanImage = document.getElementById('yuriyanImage');
-            const targetNameDiv = document.getElementById('targetName');
-            const resultTextDiv = document.getElementById('resultText');
 
-            let images = [nadalImage, yuriyanImage];
-            let index = 0;
 
-            // Display target name
-            targetNameDiv.textContent = targetName;
-            targetNameDiv.style.display = 'block';
+  // ==================================================
+  // 🎯 FirestoreからVALORANTチーム情報を取得して表示
+  // ==================================================
+  async function loadValorantTeams() {
+    try {
+      const redBox = document.getElementById("membersRed");
+      const blueBox = document.getElementById("membersBlue");
 
-            const intervals = [
-                { duration: 2000, interval: 100 },
-                { duration: 1500, interval: 300 },
-                { duration: 2400, interval: 600 }
-            ];
+      redBox.innerHTML = "";
+      blueBox.innerHTML = "";
 
-            let totalDuration = 0;
-            intervals.forEach((stage) => {
-                setTimeout(() => {
-                    let intervalId = setInterval(() => {
-                        images[index].style.display = 'none';
-                        index = 1 - index;
-                        images[index].style.display = 'block';
-                    }, stage.interval);
+      const docRef = doc(db, "TwitchChatDatabase", "VALORANTteam");
 
-                    setTimeout(() => {
-                        clearInterval(intervalId);
-                        images[index].style.display = 'none';
-                    }, stage.duration);
-                }, totalDuration);
+      // 各チームコレクション
+      const redSnap = await getDocs(collection(docRef, "アタッカー"));
+      const blueSnap = await getDocs(collection(docRef, "ディフェンダー"));
 
-                totalDuration += stage.duration;
-            });
+      const createMemberCard = (p) => `
+        <div class="member">
+          <img src="${p.icon}" class="icon" alt="${p.name}">
+          <div class="name">${p.name}</div>
+          <img src="${p.rankImg}" class="rank" alt="${p.rank}">
+        </div>
+      `;
 
-            // Add 1000ms delay after the sequence
-            totalDuration += 1000;
+      redSnap.forEach(d => {
+        const data = d.data();
+        redBox.insertAdjacentHTML("beforeend", createMemberCard(data));
+      });
 
-            setTimeout(() => {
-                const finalImage = Math.random() < 0.2 ? yuriyanImage : nadalImage;
-                finalImage.style.display = 'block';
+      blueSnap.forEach(d => {
+        const data = d.data();
+        blueBox.insertAdjacentHTML("beforeend", createMemberCard(data));
+      });
 
-                // Display result text
-                resultTextDiv.textContent = finalImage === yuriyanImage ? "ゆりやん" : "ナダル";
-                resultTextDiv.style.display = 'block';
+      console.log("✅ チームメンバーを読み込みました");
+      // チームを読み込んだ後に配置
+      positionMembersAbsolute();
+    } catch (err) {
+      console.error("❌ チーム情報取得エラー:", err);
+    }
+  }
 
-                if (finalImage === yuriyanImage) {
-                    adjustPoints(targetName, 5);
-                } else {
-                    adjustPoints(targetName, 1);
-                }
+  // =============================================
+  // 🎯 ウィンドウ中央基準・固定座標配置
+  // =============================================
+  function positionMembersAbsolute() {
+    const redTeam = document.querySelectorAll("#membersRed .member");
+    const blueTeam = document.querySelectorAll("#membersBlue .member");
 
-                setTimeout(() => {
-                    finalImage.style.display = 'none';
-                    targetNameDiv.style.display = 'none';
-                    resultTextDiv.style.display = 'none';
-                    isRouletteRunning = false;
-                }, 5000);
-            }, totalDuration);
-        }
+    const centerX = window.innerWidth / 2;
+    const centerY = window.innerHeight / 2 -400; // 全員共通の高さ
 
-        function checkForSpecialCase(displayName, message) {
-            if (displayName === "お満月ぺこり" && message.startsWith('@')) {
-                const targetName = message.split(' ')[0].slice(1); // @から後の名前を取得
-                if (message.includes('スーパーゆりやん')) {
-                    startImageSequence(targetName);
-                }
-            }
-        }
+    // --- 赤チーム ---
+    const redOffsets = [160, 280, 400, 520, 640]; // 中央から左方向
+    redTeam.forEach((el, i) => {
+      const x = centerX - redOffsets[i];
+      el.style.position = "fixed";
+      el.style.left = `${x}px`;
+      el.style.top = `${centerY}px`;
+      el.style.transform = "translate(-50%, -50%)";
+    });
 
-        function addToRanking(username) {
-            if (!ranking[username]) {
-                ranking[username] = 0; // 初期ポイントを設定
-                updateRankingDisplay();
-                updateParticipantListDisplay();
-            }
-        }
+    // --- 青チーム ---
+    const blueOffsets = [160, 280, 400, 520, 640]; // 中央から右方向
+    blueTeam.forEach((el, i) => {
+      const x = centerX + blueOffsets[i];
+      el.style.position = "fixed";
+      el.style.left = `${x}px`;
+      el.style.top = `${centerY}px`;
+      el.style.transform = "translate(-50%, -50%)";
+    });
+  }
 
-        function updateRankingDisplay() {
-            const rankingDiv = document.getElementById('ranking');
-            rankingDiv.innerHTML = '';
 
-            const sortedRanking = Object.keys(ranking).sort((a, b) => ranking[b] - ranking[a]);
 
-            sortedRanking.forEach((user, index) => {
-                const div = document.createElement('div');
-                div.classList.add('ranking-item');
-                div.innerHTML = `
-                    <span>${index + 1}位</span>
-                    <span class="name">${user}</span>
-                    <span class="points">${ranking[user]} Point</span>
-                `;
-                rankingDiv.appendChild(div);
-            });
-        }
 
-        function updateParticipantListDisplay() {
-            const participantListDiv = document.getElementById('participantList');
-            participantListDiv.innerHTML = '';
 
-            Object.keys(ranking).forEach((user) => {
-                const div = document.createElement('div');
-                div.classList.add('participant-item');
-                div.innerHTML = `
-                    <span class="name">${user}</span>
-                    <span class="points">${ranking[user]} Point</span>
-                    <button onclick="adjustPoints('${user}', 1)">+</button>
-                    <button onclick="adjustPoints('${user}', -1)">-</button>
-                `;
-                participantListDiv.appendChild(div);
-            });
-        }
 
-        function adjustPoints(username, delta) {
-            if (ranking[username] !== undefined) {
-                ranking[username] += delta;
-                updateRankingDisplay();
-                updateParticipantListDisplay();
-            }
-        }
-    </script>
+
+  </script>
+
 </body>
 </html>
