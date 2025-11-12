@@ -1,0 +1,922 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Twitch投票ゲージ（Firebase連動）</title>
+  <style>
+    /* =====================================================
+      💡 基本設定・共通
+      ===================================================== */
+    :where([hidden]) { display: none !important; }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    /* ページ全体設定（背景透明・中央配置） */
+    body {
+      margin: 0;
+      background: transparent;
+      color: #FFFFFF;
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Hiragino Kaku Gothic ProN", "Noto Sans JP", sans-serif;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+    }
+
+    /* =====================================================
+      🧱 背景ブロック制御（UI非表示時のガード）
+      ===================================================== */
+    #rootHiddenGuard {
+      position: fixed;
+      inset: 0;
+      display: block;
+      background: transparent;
+    }
+
+    /* =====================================================
+      ⚙️ 管理者ボタンパネル
+      ===================================================== */
+    #adminPanel {
+      position: fixed;
+      top: 8px;
+      left: 50%;
+      transform: translateX(-50%);
+      display: flex;
+      gap: 8px;
+      z-index: 2000;
+    }
+
+    /* 管理者ボタンの基本スタイル */
+    #adminPanel button {
+      padding: 6px 12px;
+      font-size: 16px;
+      font-weight: bold;
+    }
+
+    /* =====================================================
+      🔴🔵 投票ゲージ本体
+      ===================================================== */
+    #overlayGauge {
+      position: fixed;
+      left: 269px;       /* ゲージの左端位置 */
+      top: 643px;        /* ゲージの縦位置 */
+      width: 1382px;     /* 1651 - 269 */
+      height: 32px;      /* 675 - 643 */
+      z-index: 5000;
+      pointer-events: none;
+    }
+
+    /* 赤・青ゲージ共通設定 */
+    #overlayRed,
+    #overlayBlue {
+      position: absolute;
+      top: 0;
+      height: 100%;
+      transition: width 0.35s ease;  /* ゲージが滑らかに動く */
+    }
+
+    /* 赤ゲージ */
+    #overlayRed {
+      left: 0;
+      background: #CD0909;
+      width: 50%;
+    }
+
+    /* 青ゲージ */
+    #overlayBlue {
+      right: 0;
+      background: #1752EB;
+      width: 50%;
+    }
+
+    /* 境界線（中央の金色ライン） */
+    #overlayBorder {
+      position: absolute;
+      top: 0;
+      width: 1px;
+      height: 100%;
+      background: #CFAF74;
+      transition: left 0.35s ease;
+    }
+
+    /* =====================================================
+      💬 パーセンテージ・票数表示
+      ===================================================== */
+
+    /* 赤チーム表示位置（中央揃え） */
+    #overlayRedTextBox {
+      position: fixed;
+      left: 692px;
+      top: 515px;
+      transform: translate(-50%, -50%);
+      text-align: center;
+      color: #FFFFFF;
+      pointer-events: none;
+      z-index: 5001;
+      font-family: "Hiragino Kaku Gothic ProN", "Noto Sans JP", "Yu Gothic", sans-serif;
+    }
+
+    /* 青チーム表示位置（中央揃え） */
+    #overlayBlueTextBox {
+      position: fixed;
+      left: 1236px;
+      top: 515px;
+      transform: translate(-50%, -50%);
+      text-align: center;
+      color: #FFFFFF;
+      pointer-events: none;
+      z-index: 5001;
+      font-family: "Hiragino Kaku Gothic ProN", "Noto Sans JP", "Yu Gothic", sans-serif;
+    }
+
+    /* パーセンテージ（大きい文字） */
+    .pct-text {
+      font-size: 70px;
+      font-weight: 900;
+      line-height: 1;
+    }
+
+    /* 票数（下に小さく表示） */
+    .count-text {
+      font-size: 30px;
+      font-weight: 900;
+      line-height: 1.1;
+      margin-top: 8px;
+    }
+
+    /* 赤側のネオン発光エフェクト */
+    #overlayRedTextBox .pct-text,
+    #overlayRedTextBox .count-text {
+      text-shadow:
+        0 0 6px #E11212,
+        0 0 12px #E11212,
+        0 0 18px rgba(225,18,18,0.8);
+    }
+
+    /* 青側のネオン発光エフェクト */
+    #overlayBlueTextBox .pct-text,
+    #overlayBlueTextBox .count-text {
+      text-shadow:
+        0 0 6px #0A3FC9,
+        0 0 12px #0A3FC9,
+        0 0 18px rgba(10,63,201,0.8);
+    }
+
+    /* =====================================================
+      ⏱️ 残り時間表示
+      ===================================================== */
+    #overlayTimerBox {
+      position: fixed;
+      left: 960px;       /* 中央 */
+      top: 495px;        /* 位置指定 */
+      transform: translate(-50%, -50%);
+      text-align: center;
+      color: #FFFFFF;
+      z-index: 5002;
+      pointer-events: none;
+      font-family: "Hiragino Kaku Gothic ProN", "Noto Sans JP", "Yu Gothic", sans-serif;
+    }
+
+    /* 「残り時間」ラベル部分 */
+    #overlayTimerLabel {
+      font-size: 27px;
+      font-weight: 900;
+      line-height: 1;
+    }
+
+    /* 実際のカウント（例：3:24） */
+    #overlayTimerValue {
+      margin-top: 12px;
+      font-size: 48px;
+      font-weight: 900;
+    }
+
+    /* ===============================
+    🎨 背景画像
+    =============================== */
+    #overlayBackground {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: auto;
+      height: auto;
+      max-width: none;
+      max-height: none;
+      z-index: 100; /* UIの下にしたい場合は小さめに調整 */
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity 0.7s ease;
+    }
+    #overlayBackground.show {
+      opacity: 1;
+    }
+
+    /* フェードアニメーション */
+    .fade1s {
+      opacity: 0;
+      pointer-events: none;   /* 非表示時は操作不可 */
+      transition: opacity 0.7s ease;
+    }
+    .fade1s.show {
+      opacity: 1;
+      pointer-events: auto;   /* 表示中だけ操作可能 */
+    }
+
+
+  </style>
+</head>
+<body>
+  <!-- デフォルトは何も表示しない -->
+  <div id="rootHiddenGuard"></div>
+
+  <!-- 背景画像 -->
+  <img id="overlayBackground" 
+      src="https://raw.githubusercontent.com/omanpeko/PekoriBot/main/%E3%81%BA%E3%81%93%E3%82%AB%E3%82%B9valorant%E8%83%8C%E6%99%AF.png"
+      class="fade1s"
+      alt="背景"
+  >
+
+  <!-- 管理者用ボタン -->
+  <div id="adminPanel" hidden>
+    <button id="btnStart">投票開始</button>
+    <button id="btnRestart">タイマーリセット</button>
+    <button id="btnReset">全リセット</button>
+    <button id="btnRed">赤に＋1</button>
+    <button id="btnBlue">青に＋1</button>
+    <button id="btnShow">UI表示</button>
+    <button id="btnHide">UI非表示</button>
+    <button id="btnEnd">終了</button>
+    <button id="btnRedWin">赤勝ち</button>
+    <button id="btnBlueWin">青勝ち</button>
+    <button id="btnXLSX">Excel</button>
+  </div>
+
+  <!-- 追加オーバーレイゲージ -->
+  <div id="overlayGauge" class="fade1s">
+    <div id="overlayRed"></div>
+    <div id="overlayBlue"></div>
+    <div id="overlayBorder"></div>
+  </div>
+
+  <!-- 赤チームパーセンテージ表示 -->
+  <div id="overlayRedTextBox" class="fade1s">
+    <div class="pct-text" id="overlayRedPct">50%</div>
+    <div class="count-text" id="overlayRedCount">(0票)</div>
+  </div>
+
+  <!-- 青チームパーセンテージ表示 -->
+  <div id="overlayBlueTextBox" class="fade1s">
+    <div class="pct-text" id="overlayBluePct">50%</div>
+    <div class="count-text" id="overlayBlueCount">(0票)</div>
+  </div>
+
+  <!-- 残り時間表示 -->
+  <div id="overlayTimerBox" class="fade1s">
+    <div id="overlayTimerLabel">残り時間</div>
+    <div id="overlayTimerValue">4:00</div>
+  </div>
+
+  <!-- Exelを取り扱うライブラリ -->
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+
+  <!-- Firebase + Firestore + アプリ本体 -->
+  <script type="module">
+    import {
+      getFirestore,
+      doc,
+      onSnapshot,
+      setDoc,
+      updateDoc,
+      getDoc,
+      getDocs,
+      serverTimestamp,
+      increment,
+      collection,
+      addDoc,
+      query,
+      orderBy,
+      limit
+    } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+
+    // ==== Firebase Config ====
+    const firebaseConfig = {
+      apiKey: "AIzaSyCVTEvN3EqebNOLlFdGfGA5612VkcRRbsQ",
+      authDomain: "twitchchatdatabase.firebaseapp.com",
+      projectId: "twitchchatdatabase",
+      storageBucket: "twitchchatdatabase.firebasestorage.app",
+      messagingSenderId: "861792479829",
+      appId: "1:861792479829:web:9afe238a03f6527a55c2dc",
+      measurementId: "G-3N10HW4NEY"
+    };
+    const app = initializeApp(firebaseConfig);
+    const db  = getFirestore(app);
+    const pollsCol = collection(db, "polls");
+
+    // ==== URLパラメータ ====
+    function parseLaunchParams() {
+      const search = window.location.search.toLowerCase();
+      const params = new URLSearchParams(window.location.search);
+
+      // モード判定（両方含んでOK）
+      const mode = {
+        viewer: search.includes("viewer"),
+        log: search.includes("log"),
+      };
+
+      // チャンネル取得（複数対応）
+      const urlParam = params.get("url");
+      const channelList = [];
+      if (urlParam) {
+        for (const u of urlParam.split(",")) {
+          const ch = extractChannelName(u.trim());
+          if (ch) channelList.push(ch);
+        }
+      }
+
+      return { mode, channelList };
+    }
+    function extractChannelName(raw) {
+      if (!raw) return null;
+      let str = raw.trim();
+
+      // @ユーザー名 → URL化
+      if (str.startsWith("@")) {
+        str = "https://www.twitch.tv/" + str.slice(1);
+      }
+
+      // twitch.tv省略パターン（例: twitch.tv/omapeko や omapeko）
+      if (!/^https?:\/\//i.test(str)) {
+        if (/^twitch\.tv\//i.test(str)) {
+          str = "https://" + str;
+        } else if (!str.includes(".")) {
+          // ドメインがなければユーザー名だけとみなす
+          str = "https://www.twitch.tv/" + str;
+        }
+      }
+
+      // 実際のチャンネル名を抽出
+      const m = str.match(/twitch\.tv\/([^\/?#&]+)/i);
+      return m ? m[1].toLowerCase() : null;
+    }
+
+    let currentPollRef = null;   // 最新PollのDocRef
+    let currentPollId  = null;   // 最新PollのID
+
+    // === 最新pollを監視する ===
+    function watchLatestPoll(viewerMode){
+      const q = query(collection(db,"polls"), orderBy("createdAt","desc"), limit(1));
+      onSnapshot(q, (snap)=>{
+        if (snap.empty) return;
+        const docSnap = snap.docs[0];
+        currentPollRef = docSnap.ref;
+        currentPollId  = docSnap.id;
+
+        const data = docSnap.data() || {};
+
+        // 票更新
+        const v = data.votes || {red:0, blue:0};
+        updateBars(v.red, v.blue);
+
+        // タイマー更新
+        if (data.endTime) {
+          endTime = data.endTime;
+        }
+
+        // viewerモードのときだけ visible 制御
+        if (viewerMode) {
+          // ✅ UI表示制御
+          if (data.visible) {
+            guardEl.style.display = "none";
+
+          } else {
+            guardEl.style.display = "block";
+          }
+        }
+      });
+    }
+
+    // === defaultドキュメントを監視してUI表示制御 ===
+    function watchDefaultVisibility() {
+      const { mode } = parseLaunchParams(); // ← viewer判定に使う
+      const defaultRef = doc(db, "polls", "default");
+
+      onSnapshot(defaultRef, (snap) => {
+        if (!snap.exists()) return;
+        const data = snap.data();
+        const visible = !!data.visible;
+
+        const bgEl    = document.getElementById("overlayBackground");
+        const frameEl = document.getElementById("overlayGauge");
+        const redBox  = document.getElementById("overlayRedTextBox");
+        const blueBox = document.getElementById("overlayBlueTextBox");
+        const timerBox = document.getElementById("overlayTimerBox");
+
+        // ✅ viewerモードのときだけフェード制御を行う
+        if (mode.viewer) {
+          if (visible) {
+            console.log("true (viewer mode)");
+            [frameEl, redBox, blueBox, timerBox, bgEl].forEach(el => el?.classList.add("show"));
+          } else {
+            console.log("false (viewer mode)");
+            [frameEl, redBox, blueBox, timerBox, bgEl].forEach(el => el?.classList.remove("show"));
+          }
+        } else {
+          // 管理者モードでは常に表示
+          [frameEl, redBox, blueBox, timerBox].forEach(el => el?.classList.add("show"));
+        }
+      });
+    }
+
+    // ==== 投票ロジック ====
+    let ws = null, finished = false;
+    const userVotes = Object.create(null);
+    let endTime = null;
+
+    const guardEl = document.getElementById("rootHiddenGuard");
+    const breakdownEl = document.getElementById("breakdown");
+    const redPctEl = document.getElementById("redPct");
+    const bluePctEl= document.getElementById("bluePct");
+    const redCntEl = document.getElementById("redCount");
+    const blueCntEl= document.getElementById("blueCount");
+
+    // ==== WebSocket接続（複数JOIN + log対応） ====
+    function connectMultipleChannels(channels, launchMode) {
+      if (!channels.length) return;
+
+      ws = new WebSocket("wss://irc-ws.chat.twitch.tv:443");
+
+      ws.onopen = () => {
+        ws.send("CAP REQ :twitch.tv/tags twitch.tv/commands twitch.tv/membership");
+        ws.send("PASS SCHMOOPIIE");
+        ws.send("NICK justinfan" + Math.floor(Math.random() * 100000));
+
+        for (const ch of channels) {
+          ws.send("JOIN #" + ch);
+          console.log(`✅ JOINED: #${ch}`);
+        }
+      };
+
+      ws.onmessage = (ev) => {
+        const raw = ev.data.trim();
+        if (raw.startsWith("PING")) { ws.send("PONG :tmi.twitch.tv"); return; }
+
+        for (const line of raw.split("\n")) {
+          if (!line.includes("PRIVMSG")) continue;
+
+          const msg  = getMessageText(line);
+          const tags = parseTags(line);
+          const uid  = getStableUserId(tags, line);
+          if (!uid) continue;
+          const displayName = tags["display-name"] || uid;
+          const channel = (line.match(/#([a-zA-Z0-9_]+)/) || [])[1] || "unknown";
+
+          // 💬 ログ出力：viewerモードでは無効化
+          if (!launchMode.viewer) {
+            console.log(`[配信: ${channel}] 💬 ${displayName} (${uid}): ${msg}`);
+          }
+
+          // 💬 Logモードのときのみ詳細ログ出力
+          if (launchMode.log) {
+            console.log(`[LOGモード] ${channel} | ${displayName}: ${msg}`);
+          }
+
+          if (!launchMode.viewer && !launchMode.log) return;
+          if (finished || !currentPollId) return;
+
+          let vote = null;
+          const normalizedMsg = msg.toLowerCase().replace(/[！!]/g, "!");
+          if (/! *(赤|あか|aka|red)/i.test(normalizedMsg)) vote = "red";
+          else if (/! *(青|あお|ao|blue)/i.test(normalizedMsg)) vote = "blue";
+          if (!vote) continue;
+
+          registerOrChangeVote(currentPollId, uid, displayName, vote);
+        }
+      };
+    }
+
+    function getMessageText(line){
+      const i = line.indexOf(" PRIVMSG ");
+      if (i < 0) return "";
+      const part = line.slice(i);
+      const c = part.indexOf(" :");
+      return c >= 0 ? part.slice(c+2) : "";
+    }
+    function parseTags(line){
+      const firstSpace = line.indexOf(" ");
+      const tagsPart = firstSpace > 0 ? line.slice(0, firstSpace) : "";
+      const obj = {};
+      for (const kv of tagsPart.split(";")) {
+        const [k, v] = kv.split("=");
+        if (k) obj[k] = v || "";
+      }
+      return obj;
+    }
+    function getStableUserId(tags, line){
+      if (tags["user-id"]) return tags["user-id"];
+      if (tags["login"]) return tags["login"];
+      const m = line.match(/^[^ ]+\s:([^!]+)!/);
+      if (m) return m[1].toLowerCase();
+      return null;
+    }
+
+
+    // ユーザー投票処理
+    async function registerOrChangeVote(pollId, uid, displayName, color) {
+      const pollRef = doc(db, "polls", pollId);
+      const pollSnap = await getDoc(pollRef);
+      if (!pollSnap.exists()) return;
+      const pollData = pollSnap.data();
+
+      // 終了済みチェック
+      if (pollData.finished || Date.now() > pollData.endTime) {
+        console.log("⏰ 投票受付終了済みです");
+        return;
+      }
+
+      // votersサブコレクションの参照
+      const voterRef = doc(db, "polls", pollId, "voters", displayName);
+      const voterSnap = await getDoc(voterRef);
+
+      // 🔸 初回投票
+      if (!voterSnap.exists()) {
+        await setDoc(voterRef, {
+          name: displayName,
+          uid: uid,
+          choice: color
+        });
+        await updateDoc(pollRef, {
+          [`votes.${color}`]: increment(1)
+        });
+        console.log(`🗳️ 新規投票: ${displayName} → ${color}`);
+      } 
+      // 🔸 投票変更（色が変わったときだけ差し引き）
+      else {
+        const prevChoice = voterSnap.data().choice;
+        if (prevChoice !== color) {
+          await updateDoc(pollRef, {
+            [`votes.${prevChoice}`]: increment(-1),
+            [`votes.${color}`]: increment(1)
+          });
+          await updateDoc(voterRef, { choice: color });
+          console.log(`🔁 投票変更: ${displayName} → ${color}`);
+        }
+      }
+    }
+
+    //投票パーセントゲージのアップデート
+    function updateBars(red, blue){
+      const total = red + blue;
+      let redPct = total > 0 ? Math.round((red/total)*1000)/10 : 50;
+
+      // ここから追加：オーバーレイゲージも同期させる
+      const oRed   = document.getElementById("overlayRed");
+      const oBlue  = document.getElementById("overlayBlue");
+      const oLine  = document.getElementById("overlayBorder");
+      const oGauge = document.getElementById("overlayGauge");
+
+      if (oRed && oBlue && oLine && oGauge) {
+        // 幅を%で
+        oRed.style.width  = redPct + "%";
+        oBlue.style.width = (100 - redPct) + "%";
+
+        // 境界線の位置をpxで計算
+        const gaugeWidth = oGauge.offsetWidth || 1382; // 保険で固定値
+        const lineLeft = gaugeWidth * (redPct / 100);
+        oLine.style.left = lineLeft + "px";
+      }
+
+      // 追加：オーバーレイの%と票数も更新
+      const oRedPctEl = document.getElementById("overlayRedPct");
+      const oRedCntEl = document.getElementById("overlayRedCount");
+      const oBluePctEl = document.getElementById("overlayBluePct");
+      const oBlueCntEl = document.getElementById("overlayBlueCount");
+
+      if (oRedPctEl && oRedCntEl && oBluePctEl && oBlueCntEl) {
+        // redPct は上で計算済み
+        const bluePct = 100 - redPct;
+
+        oRedPctEl.textContent = redPct.toFixed(0) + "%";
+        oBluePctEl.textContent = bluePct.toFixed(0) + "%";
+
+        oRedCntEl.textContent = `(${red}票)`;
+        oBlueCntEl.textContent = `(${blue}票)`;
+      }
+    }
+
+    // 1秒ごとに残り時間を表示
+    setInterval(()=>{
+      if (endTime) {
+        const remainingMs = endTime - Date.now();
+        const remainingSec = Math.max(0, Math.floor(remainingMs/1000));
+        renderTime(remainingSec);
+      }
+    }, 1000);
+
+    function renderTime(sec){
+      const m = String(Math.floor(sec/60));
+      const s = String(sec%60).padStart(2,"0");
+      const overlayTimerValue = document.getElementById("overlayTimerValue");
+      const overlayTimerLabel = document.getElementById("overlayTimerLabel");
+
+      if (sec > 0) {
+        const timeText = `${m}:${s}`;
+        // オーバーレイのほう
+        if (overlayTimerValue) overlayTimerValue.textContent = timeText;
+        // ラベルを表示
+        if (overlayTimerLabel) overlayTimerLabel.style.display = "block";
+      } else {
+        if (overlayTimerValue) overlayTimerValue.textContent = "受付終了";
+        // ラベルを隠す
+        if (overlayTimerLabel) overlayTimerLabel.style.display = "none";
+      }
+    }
+
+    // ==== 管理者ボタン ====
+    const { mode } = parseLaunchParams();
+    const isAdmin = !mode.viewer && !mode.log;
+    document.getElementById("adminPanel").hidden = !isAdmin;
+
+    // ==== 投票開始（新しいpollを作る）====
+    document.getElementById("btnStart").addEventListener("click", async ()=>{
+      // 日時からID生成
+      const now = new Date();
+      const id = now.toISOString().replace(/[:.]/g,"-"); // 2025-10-02T14-33-15-123Z → 2025-10-02T14-33-15-123Z
+      const pollRef = doc(collection(db,"polls"), id);
+
+      await setDoc(pollRef, {
+        visible: true,
+        votes: { red: 0, blue: 0 },
+        endTime: Date.now() + 240000, // ← 投票時間4分
+        createdAt: serverTimestamp()
+      });
+
+      currentPollRef = pollRef;
+      currentPollId  = id;
+    });
+
+    // ==== タイマーリスタート ====
+    document.getElementById("btnRestart").addEventListener("click", async ()=>{
+      if (!currentPollRef) return;
+      await updateDoc(currentPollRef, { endTime: Date.now() + 240000  });
+    });
+
+    // ==== 全リセット ====
+    document.getElementById("btnReset").addEventListener("click", async ()=>{
+      if (!currentPollRef) return;
+      await updateDoc(currentPollRef, {
+        votes: { red: 0, blue: 0 },
+        endTime: Date.now() + 240000
+      });
+    });
+
+    function setupLongPress(btnId, color) {
+      const btn = document.getElementById(btnId);
+      let intervalId = null, timeoutId = null, isPressed = false;
+      const startPress = async () => {
+        isPressed = true;
+        if (currentPollRef) await updateDoc(currentPollRef, { [`votes.${color}`]: increment(1) });
+        timeoutId = setTimeout(() => {
+          if (isPressed) {
+            intervalId = setInterval(async ()=>{
+              if (!isPressed || !currentPollRef) return;
+              await updateDoc(currentPollRef, { [`votes.${color}`]: increment(1) });
+            },200);
+          }
+        },1000);
+      };
+      const endPress = ()=>{
+        isPressed = false;
+        clearTimeout(timeoutId);
+        clearInterval(intervalId);
+      };
+      btn.addEventListener("mousedown", startPress);
+      btn.addEventListener("mouseup", endPress);
+      btn.addEventListener("mouseleave", endPress);
+    }
+    setupLongPress("btnRed","red");
+    setupLongPress("btnBlue","blue");
+
+    document.getElementById("btnShow").addEventListener("click", async ()=>{
+      const defaultRef = doc(db, "polls", "default");
+      await setDoc(defaultRef, { visible: true }, { merge: true });
+    });
+
+    // UI非表示
+    document.getElementById("btnHide").addEventListener("click", async ()=>{
+      const defaultRef = doc(db, "polls", "default");
+      await setDoc(defaultRef, { visible: false }, { merge: true });
+    });
+
+    // ==== 起動時処理 ====
+    window.addEventListener("load", () => {
+      const { mode, channelList } = parseLaunchParams();
+
+      if (channelList.length) connectMultipleChannels(channelList, mode);
+
+      // viewer or logどちらかを含んでいればUI起動
+      if (mode.viewer || mode.log) {
+        watchLatestPoll(true);
+      } else {
+        // adminモードの場合
+        watchLatestPoll(false);
+        guardEl.style.display = "none";
+      }
+
+      watchDefaultVisibility();
+
+    });
+
+    // ==== 終了ボタン ====
+    document.getElementById("btnEnd").addEventListener("click", async ()=>{
+      if (!currentPollRef) return;
+
+      const now = Date.now();
+
+      // Firestore更新
+      await updateDoc(currentPollRef, {
+        finished: true,
+        endTime: now
+      });
+
+      // ローカル状態も終了扱いに
+      finished = true;
+      endTime = now;
+    });
+
+  // 結果表示関数（フェードインして10秒後にフェードアウト）
+  function showResult(html) {
+    winnerEl.innerHTML = html;
+    // フェードイン
+    resultEl.classList.add("show");
+
+    // 10秒後にフェードアウト
+    setTimeout(() => {
+      resultEl.classList.remove("show");
+    }, 10000);
+  }
+
+  // ==== 赤勝ち ====
+  document.getElementById("btnRedWin").addEventListener("click", async () => {
+    if (!currentPollRef) return;
+    await updateDoc(currentPollRef, {
+      winner: "red"
+    });
+    console.log("✅ winner:red を保存しました");
+  });
+
+  // ==== 青勝ち ====
+  document.getElementById("btnBlueWin").addEventListener("click", async () => {
+    if (!currentPollRef) return;
+    await updateDoc(currentPollRef, {
+      winner: "blue"
+    });
+    console.log("✅ winner:blue を保存しました");
+  });
+
+
+  //----------------------------------------------------
+  // Excelに出力（最終結果シート付き）
+  //----------------------------------------------------
+
+  // Excelで使えない文字をシート名から除去するやつ
+  function sanitizeSheetName(name) {
+    // Excelで禁止されてる文字: : \ / ? * [ ]
+    return name.replace(/[:\\\/\?\*\[\]]/g, "").slice(0, 31);
+  }
+
+  async function exportRecentPollsToXLSX() {
+    try {
+      const thisYear = String(new Date().getFullYear());
+
+      // pollsを新しい順で多めに取る
+      const pollsQuery = query(
+        collection(db, "polls"),
+        orderBy("createdAt", "desc"),
+        limit(30)
+      );
+      const pollSnaps = await getDocs(pollsQuery);
+
+      // 年が一致するものだけに絞る
+      const targetPolls = [];
+      pollSnaps.forEach((docSnap) => {
+        const id = docSnap.id || "";
+        if (id.startsWith(thisYear + "-")) {
+          // データもここで持っておく（winnerを使うので）
+          targetPolls.push({ id, ref: docSnap.ref, data: docSnap.data() || {} });
+        }
+      });
+
+      // 最新5件
+      const selectedPolls = targetPolls.slice(0, 5);
+
+      // ここで「uidごとのポイント」を集計していく
+      // scores[uid] = { name, uid, point }
+      const scores = Object.create(null);
+
+      // あとでブックに追加するために、各pollごとのシートも保存しておく
+      const pollSheets = [];
+
+      for (const poll of selectedPolls) {
+        const votersSnap = await getDocs(collection(poll.ref, "voters"));
+
+        // 1行目ヘッダー
+        const rows = [
+          ["name", "uid", "choice"]
+        ];
+
+        const winnerColor = poll.data.winner || ""; // "red" / "blue" / "" かも
+        // 行データを作る＆スコアを計算する
+        votersSnap.forEach((voterDoc) => {
+          const d = voterDoc.data() || {};
+          const name = d.name || voterDoc.id || "";
+          const uid = d.uid || "";
+          const choice = d.choice || "";
+
+          rows.push([name, uid, choice]);
+
+          // スコア加算（winnerが入ってて、choiceが一致している人だけ1pt）
+          if (winnerColor && choice === winnerColor && uid) {
+            if (!scores[uid]) {
+              scores[uid] = { name, uid, point: 0 };
+            }
+            scores[uid].point += 1;
+          }
+        });
+
+        // rows → worksheet に変換
+        const ws = XLSX.utils.aoa_to_sheet(rows);
+
+        // E1 に winner の色を書き込む（例: "red"）
+        if (winnerColor) {
+          ws["E1"] = { t: "s", v: winnerColor };
+        } else {
+          ws["E1"] = { t: "s", v: "" };
+        }
+        
+        // シートの範囲をE1まで広げる
+        if (!ws['!ref']) {
+          ws['!ref'] = "A1:E1";
+        } else {
+          const range = XLSX.utils.decode_range(ws['!ref']);
+          // 4 は 0始まりでE列
+          if (range.e.c < 4) {
+            range.e.c = 4;
+            ws['!ref'] = XLSX.utils.encode_range(range);
+          }
+        }
+
+        const sheetName = sanitizeSheetName(poll.id);
+        pollSheets.push({ sheetName, ws });
+      }
+
+      // ここまでで scores に全員分の point が入ったので、ランキングを作る
+      const scoreArray = Object.values(scores);
+      // point降順 → 名前順くらいでソート
+      scoreArray.sort((a, b) => {
+        if (b.point !== a.point) return b.point - a.point;
+        return (a.name || "").localeCompare(b.name || "");
+      });
+
+      // 「最終結果」シートを作る
+      const finalRows = [
+        ["name", "uid", "point"]
+      ];
+      scoreArray.forEach((item) => {
+        finalRows.push([item.name, item.uid, item.point]);
+      });
+      const finalWs = XLSX.utils.aoa_to_sheet(finalRows);
+
+      // ブックを作って、まず「最終結果」を一番最初に入れる
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, finalWs, "最終結果");
+
+      // そのあとに各pollシートを追加
+      for (const ps of pollSheets) {
+        XLSX.utils.book_append_sheet(wb, ps.ws, ps.sheetName);
+      }
+
+      // 保存
+      const nowStr = new Date().toISOString().slice(0, 10); // 2025-11-06
+      const fileName = `${nowStr}_polls_voters.xlsx`;
+      XLSX.writeFile(wb, fileName);
+
+      console.log("✅ Excel出力完了（最終結果つき）");
+    } catch (err) {
+      console.error("Excel出力中にエラー: ", err);
+    }
+  }
+
+  // ボタンに紐付け（これはそのまま）
+  document.getElementById("btnXLSX")?.addEventListener("click", exportRecentPollsToXLSX);
+
+
+
+
+  </script>
+
+</body>
+</html>
